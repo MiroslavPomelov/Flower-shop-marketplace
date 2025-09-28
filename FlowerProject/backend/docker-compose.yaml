@@ -1,0 +1,334 @@
+services:
+  usersdb:
+    image: postgres:14
+    container_name: usersdb
+    environment:
+      POSTGRES_USER: users_user
+      POSTGRES_PASSWORD: users_password
+      POSTGRES_DB: usersdb
+    volumes:
+      - usersdb_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U users_user -d usersdb"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  users-service:
+    build:
+      context: ./users-service
+      dockerfile: deploy/composes/Dockerfile
+    container_name: users-service
+    ports:
+      - "3001:3000"
+    env_file:
+      - ./users-service/deploy/environments/dev.env
+    environment:
+      DB_HOST: usersdb
+      DB_PORT: 5432
+      DB_USERNAME: users_user
+      DB_PASSWORD: users_password
+      DB_NAME: usersdb
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - app_network
+    depends_on:
+      usersdb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: deploy/composes/Dockerfile
+    container_name: auth-service
+    ports:
+      - "3002:3000"
+    env_file:
+      - ./auth-service/deploy/environments/dev.env
+    environment:
+      USERS_SERVICE_URL: http://users-service:3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - app_network
+    depends_on:
+      users-service:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  shopdb:
+    image: postgres:14
+    container_name: shopdb
+    environment:
+      POSTGRES_USER: shop_user
+      POSTGRES_PASSWORD: shop_password
+      POSTGRES_DB: shopdb
+    volumes:
+      - shopdb_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop_user -d shopdb"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  shop-service:
+    build:
+      context: ./shop-service
+      dockerfile: deploy/composes/Dockerfile
+    container_name: shop-service
+    ports:
+      - "3003:3000"
+    env_file:
+      - ./shop-service/deploy/environments/dev.env
+    environment:
+      DB_HOST: shopdb
+      DB_PORT: 5432
+      DB_USERNAME: shop_user
+      DB_PASSWORD: shop_password
+      DB_NAME: shopdb
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - app_network
+    volumes:
+      - ./nginx-service/uploads:/usr/share/nginx/images
+    depends_on:
+      shopdb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  productdb:
+    image: postgres:14
+    container_name: productdb
+    environment:
+      POSTGRES_USER: product_user
+      POSTGRES_PASSWORD: product_password
+      POSTGRES_DB: productdb
+    volumes:
+      - productdb_data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U product_user -d productdb"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  product-service:
+    build:
+      context: ./product-service
+      dockerfile: deploy/composes/Dockerfile
+    container_name: product-service
+    ports:
+      - "3004:3000"
+    env_file:
+      - ./product-service/deploy/environments/dev.env
+    environment:
+      DB_HOST: productdb
+      DB_PORT: 5432
+      DB_USERNAME: product_user
+      DB_PASSWORD: product_password
+      DB_NAME: productdb
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - app_network
+    volumes:
+      - ./nginx-service/uploads:/usr/share/nginx/images
+    depends_on:
+      productdb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: deploy/composes/Dockerfile
+    container_name: api-gateway
+    ports:
+      - "80:3000"
+    networks:
+      - app_network
+    depends_on:
+      users-service:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      shop-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=2 --spider http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    environment:
+      - ENV_TOKEN=ya29.asdgv_sadashldkjhasdiufrekjhkjhdaksjhduHOIUhiluGHiglUUU
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app_network
+    restart: always
+
+  nginx-service:
+    build:
+      context: ./nginx-service
+      dockerfile: Dockerfile
+    container_name: nginx-service
+    ports:
+      - "8080:80"
+    networks:
+      - app_network
+    volumes:
+      - ./nginx-service/uploads:/usr/share/nginx/images
+    depends_on:
+      - api-gateway
+
+  payment-service:
+    build:
+      context: ./payment-service/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    ports:
+      - "3005:3000"
+    networks:
+      - app_network
+    environment:
+      - ASPNETCORE_URLS=http://+:3000
+      - ConnectionStrings__PaymentDB=Host=paymentdb;Port=5432;Database=paymentdb;Username=payment_user;Password=payment_password
+      - Redis__Host=redis
+      - Redis__Port=6379
+    depends_on:
+      paymentdb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  paymentdb:
+    image: postgres:14
+    container_name: paymentdb
+    environment:
+      POSTGRES_USER: payment_user
+      POSTGRES_PASSWORD: payment_password
+      POSTGRES_DB: paymentdb
+    volumes:
+      - paymentdb_data:/var/lib/postgresql/data
+    ports:
+      - "5436:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_user -d paymentdb"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  orderdb:
+    image: postgres:14
+    container_name: orderdb
+    environment:
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_password
+      POSTGRES_DB: orderdb
+    volumes:
+      - orderdb_data:/var/lib/postgresql/data
+    ports:
+      - "5437:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_user -d orderdb"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  order-service:
+    build:
+      context: ./order-service/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    ports:
+      - "3006:3000"
+    networks:
+      - app_network
+    environment:
+      - ASPNETCORE_URLS=http://+:3000
+      - ConnectionStrings__OrderDB=Host=orderdb;Port=5432;Database=orderdb;Username=order_user;Password=order_password
+      - Redis__Host=redis
+      - Redis__Port=6379
+      - Jwt__Key=uHadsdaHHHsjsasdsadasdidjadajdjadk3123131h
+      - Jwt__Issuer=flower-shop
+      - Jwt__Audience=flower-shop-users
+      - JWT_SECRET=uHadsdaHHHsjsasdsadasdidjadajdjadk3123131h
+      - ENV_TOKEN=ya29.asdgv_sadashldkjhasdiufrekjhkjhdaksjhduHOIUhiluGHiglUUU
+    depends_on:
+      orderdb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10  
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  usersdb_data:
+  shopdb_data:
+  productdb_data:
+  paymentdb_data:
+  orderdb_data:

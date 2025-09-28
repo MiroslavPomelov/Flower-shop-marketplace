@@ -1,0 +1,86 @@
+version: '3.9'
+
+services:
+  usersdb:
+    image: postgres:14
+    container_name: usersdb
+    environment:
+      POSTGRES_USER: users_user
+      POSTGRES_PASSWORD: users_password
+      POSTGRES_DB: usersdb
+    volumes:
+      - usersdb_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U users_user -d usersdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  users-service:
+    build:
+      context: ../../../users-service
+      dockerfile: deploy/composes/Dockerfile
+    container_name: users-service
+    ports:
+      - "3001:3000"
+    env_file:
+      - ../../../users-service/deploy/environments/dev.env
+    environment:
+      DB_HOST: usersdb
+      DB_PORT: 5432
+      DB_USERNAME: users_user
+      DB_PASSWORD: users_password
+      DB_NAME: usersdb
+    networks:
+      - app_network
+    depends_on:
+      usersdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app_network
+
+  auth-service:
+    build:
+      context: ../..
+      dockerfile: deploy/composes/Dockerfile
+    container_name: auth-service
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../../deploy/environments/dev.env
+    environment:
+      USERS_SERVICE_URL: http://users-service:3000
+    networks:
+      - app_network
+    depends_on:
+      users-service:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  usersdb_data:
